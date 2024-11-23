@@ -23,8 +23,6 @@ const openai = new OpenAI({
   dangerouslyAllowBrowser: true
 });
 
-
-
 const markdownStyles = {
   h1: 'text-3xl font-bold mb-4 mt-6 pb-2 border-b border-white/10',
   h2: 'text-2xl font-bold mb-3 mt-5',
@@ -46,7 +44,7 @@ const markdownStyles = {
 };
 
 const Dashboard = () => {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [inputMessage, setInputMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -63,7 +61,6 @@ const Dashboard = () => {
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
-  const [messagesParent] = useAutoAnimate();
   
 
   useEffect(() => {
@@ -92,32 +89,51 @@ const Dashboard = () => {
   const loadConversations = async () => {
     try {
       const user = auth.currentUser;
-      if (!user) return;
+      if (!user) {
+        console.log("No user logged in"); // Add logging to debug auth state
+        return;
+      }
 
+      // Add index check to verify if composite index exists
       const q = query(
         collection(db, 'conversations'),
         where('userId', '==', user.uid),
         orderBy('timestamp', 'desc')
       );
 
-      const querySnapshot = await getDocs(q);
-      const loadedConversations = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      // Add error handling for missing index
+      try {
+        const querySnapshot = await getDocs(q);
+        const loadedConversations = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
 
-      setConversations(loadedConversations);
+        console.log("Loaded conversations:", loadedConversations); // Log loaded data
+        setConversations(loadedConversations);
+      } catch (indexError) {
+        // Check if error is due to missing index
+        if (indexError.code === 'failed-precondition') {
+          console.error('Missing index for query. Create a composite index for userId and timestamp');
+          setError('Database index not configured properly. Please contact support.');
+        } else {
+          throw indexError; // Re-throw if it's a different error
+        }
+      }
     } catch (err) {
       console.error('Error loading conversations:', err);
-      setError('Failed to load conversations');
+      setError('Failed to load conversations: ' + err.message);
     }
   };
 
   const saveConversation = async () => {
     try {
       const user = auth.currentUser;
-      if (!user) return;
-
+      if (!user) {
+        console.log("No user logged in");
+        return;
+      }
+  
       const conversationData = {
         userId: user.uid,
         title: currentConversation.title,
@@ -125,20 +141,15 @@ const Dashboard = () => {
         timestamp: new Date().toISOString(),
         lastUpdated: new Date().toISOString()
       };
-
-      if (currentConversation.id) {
-        await updateDoc(doc(db, 'conversations', currentConversation.id), conversationData);
-      } else {
-        const docRef = await addDoc(collection(db, 'conversations'), conversationData);
-        setCurrentConversation(prev => ({ ...prev, id: docRef.id }));
-      }
-
-      await loadConversations();
-    } catch (err) {
-      console.error('Error saving conversation:', err);
-      setError('Failed to save conversation');
+  
+      const docRef = await addDoc(collection(db, 'conversations'), conversationData);
+  
+      console.log("Conversation saved with ID: ", docRef.id);
+    } catch (error) {
+      console.error('Error saving conversation:', error);
     }
   };
+  
 
   const deleteConversation = async (conversationId) => {
     try {
